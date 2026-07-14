@@ -61,7 +61,10 @@ def entry_path(e):
 # Drop any existing entry for our path (string or object form).
 plugins = [e for e in plugins if entry_path(e) != rel]
 if not remove:
-    plugins.append({"path": rel, "title": title, "enabled": True})
+    # Register as a plain STRING path. This WebTAK build's manifest validator rejects
+    # object-form entries ({path,title,enabled}) and crashes the whole app before any
+    # plugin loads; the string form is accepted by both the validator and the loader.
+    plugins.append(rel)
 
 data["plugins"] = plugins
 tmp = manifest + ".tmp"
