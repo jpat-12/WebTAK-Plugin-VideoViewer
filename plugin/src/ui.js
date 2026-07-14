@@ -137,7 +137,7 @@ function renderSettings(pane) {
         </select></div>
     </div>
     <div class="takvv-row">
-      <div class="takvv-field"><label>API port</label><input class="s-api" type="number" value="${attr(c.apiPort)}" /></div>
+      <div class="takvv-field"><label>API port <span class="takvv-hint">(blank = 443/80 proxy)</span></label><input class="s-api" type="number" placeholder="blank for stream.prod.ilwg.us" value="${attr(c.apiPort)}" /></div>
       <div class="takvv-field"><label>MediaMTX port</label><input class="s-mtx" type="number" value="${attr(c.mediamtxPort)}" /></div>
     </div>
     <div class="takvv-field">
@@ -162,7 +162,7 @@ function renderSettings(pane) {
       restreamerHost: pane.querySelector('.s-host').value.trim(),
       scheme: pane.querySelector('.s-scheme').value,
       hlsMode: pane.querySelector('.s-mode').value,
-      apiPort: +pane.querySelector('.s-api').value || 3000,
+      apiPort: pane.querySelector('.s-api').value.trim(),   // blank = reverse-proxy on 443/80
       mediamtxPort: +pane.querySelector('.s-mtx').value || 8888,
       apiKey: pane.querySelector('.s-apikey').value.trim(),
       videoOnly: pane.querySelector('.s-videoonly').checked,

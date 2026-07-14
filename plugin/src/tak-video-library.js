@@ -11,6 +11,7 @@ import { listStreams } from './restreamer.js';
 export async function fetchVideoLibrary() {
   const streams = await listStreams();
   return streams
+    .filter((s) => s && s.name && !s.name.endsWith('_hls'))   // hide transcode derivatives (matches dashboard)
     .map((s) => ({
       name: s.name,
       ready: !!s.ready,

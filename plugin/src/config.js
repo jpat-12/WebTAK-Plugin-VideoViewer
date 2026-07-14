@@ -16,7 +16,9 @@ export const DEFAULTS = {
   restreamerHost: '',
   scheme: 'https',            // 'https' | 'http'
 
-  apiPort: 3000,              // Flask API + HLS proxy + ABR playlists
+  // Flask API + HLS proxy + ABR playlists. Blank = reverse-proxied on 443/80
+  // (e.g. https://stream.prod.ilwg.us). Use 3000 to hit Flask directly.
+  apiPort: '',
   mediamtxPort: 8888,         // MediaMTX native HLS (used only by hlsMode 'direct')
 
   // Which HLS URL to play:

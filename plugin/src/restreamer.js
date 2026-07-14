@@ -28,7 +28,12 @@ function sanitize(s) {
 }
 
 function origin(cfg, port) {
-  return `${cfg.scheme}://${cfg.restreamerHost}:${port}`;
+  // Omit the port when it's blank or the scheme's default — so a reverse-proxied
+  // Restreamer on 443/80 (e.g. https://stream.prod.ilwg.us) resolves without ":3000".
+  const isDefault = (cfg.scheme === 'https' && String(port) === '443')
+                 || (cfg.scheme === 'http' && String(port) === '80');
+  const suffix = (!port || isDefault) ? '' : `:${port}`;
+  return `${cfg.scheme}://${cfg.restreamerHost}${suffix}`;
 }
 
 export function hlsUrl(name, mode = getConfig().hlsMode, cfg = getConfig()) {

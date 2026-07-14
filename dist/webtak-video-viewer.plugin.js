@@ -21,7 +21,9 @@ const DEFAULTS = {
   restreamerHost: '',
   scheme: 'https',            // 'https' | 'http'
 
-  apiPort: 3000,              // Flask API + HLS proxy + ABR playlists
+  // Flask API + HLS proxy + ABR playlists. Blank = reverse-proxied on 443/80
+  // (e.g. https://stream.prod.ilwg.us). Use 3000 to hit Flask directly.
+  apiPort: '',
   mediamtxPort: 8888,         // MediaMTX native HLS (used only by hlsMode 'direct')
 
   // Which HLS URL to play:
@@ -106,7 +108,12 @@ function sanitize(s) {
 }
 
 function origin(cfg, port) {
-  return `${cfg.scheme}://${cfg.restreamerHost}:${port}`;
+  // Omit the port when it's blank or the scheme's default — so a reverse-proxied
+  // Restreamer on 443/80 (e.g. https://stream.prod.ilwg.us) resolves without ":3000".
+  const isDefault = (cfg.scheme === 'https' && String(port) === '443')
+                 || (cfg.scheme === 'http' && String(port) === '80');
+  const suffix = (!port || isDefault) ? '' : `:${port}`;
+  return `${cfg.scheme}://${cfg.restreamerHost}${suffix}`;
 }
 
 function hlsUrl(name, mode = getConfig().hlsMode, cfg = getConfig()) {
@@ -219,6 +226,7 @@ async function ensurePull(source, cfg = getConfig()) {
 async function fetchVideoLibrary() {
   const streams = await listStreams();
   return streams
+    .filter((s) => s && s.name && !s.name.endsWith('_hls'))   // hide transcode derivatives (matches dashboard)
     .map((s) => ({
       name: s.name,
       ready: !!s.ready,
@@ -760,7 +768,7 @@ function renderSettings(pane) {
         </select></div>
     </div>
     <div class="takvv-row">
-      <div class="takvv-field"><label>API port</label><input class="s-api" type="number" value="${attr(c.apiPort)}" /></div>
+      <div class="takvv-field"><label>API port <span class="takvv-hint">(blank = 443/80 proxy)</span></label><input class="s-api" type="number" placeholder="blank for stream.prod.ilwg.us" value="${attr(c.apiPort)}" /></div>
       <div class="takvv-field"><label>MediaMTX port</label><input class="s-mtx" type="number" value="${attr(c.mediamtxPort)}" /></div>
     </div>
     <div class="takvv-field">
@@ -785,7 +793,7 @@ function renderSettings(pane) {
       restreamerHost: pane.querySelector('.s-host').value.trim(),
       scheme: pane.querySelector('.s-scheme').value,
       hlsMode: pane.querySelector('.s-mode').value,
-      apiPort: +pane.querySelector('.s-api').value || 3000,
+      apiPort: pane.querySelector('.s-api').value.trim(),   // blank = reverse-proxy on 443/80
       mediamtxPort: +pane.querySelector('.s-mtx').value || 8888,
       apiKey: pane.querySelector('.s-apikey').value.trim(),
       videoOnly: pane.querySelector('.s-videoonly').checked,
