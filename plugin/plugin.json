@@ -1,0 +1,15 @@
+{
+  "id": "takvv-video-viewer",
+  "name": "Video Viewer",
+  "version": "0.1.0",
+  "description": "Floating, resizable video windows for RTSP / RTSPS / SRT / RTMP / HLS feeds, played through the TAK Restreamer (MediaMTX). Manual URL entry plus TAK video-library picker.",
+  "author": "Jonathan Pattara — ILWG CAP",
+  "entry": "index.js",
+  "type": "module",
+  "icon": "📹",
+  "permissions": ["network", "media"],
+  "capabilities": {
+    "protocols": ["rtsp", "rtsps", "srt", "rtmp", "rtmps", "hls"],
+    "transports": ["hls", "webrtc-whep"]
+  }
+}

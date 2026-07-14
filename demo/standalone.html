@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TAK Video Viewer — Standalone Test</title>
+  <style>
+    body { margin: 0; min-height: 100vh; background:
+      radial-gradient(circle at 30% 20%, #10233f 0, #0a0a0a 60%);
+      color: #e8ebf2; font-family: 'Segoe UI', system-ui, sans-serif; }
+    .hdr { padding: 18px 24px; border-bottom: 1px solid #242424;
+      background: linear-gradient(135deg, #000d40, #001871); border-bottom: 3px solid #c8102e; }
+    .hdr h1 { margin: 0; font-size: 18px; }
+    .hdr p { margin: 4px 0 0; font-size: 12px; color: rgba(255,255,255,.6); }
+    .panel { max-width: 720px; margin: 24px auto; padding: 0 20px; }
+    .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; color: #7c8598; }
+    button { background: #001871; color: #fff; border: 1px solid #c8102e; padding: 10px 16px;
+      border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; margin: 4px 6px 4px 0; }
+    button:hover { background: #002bb0; }
+    code { background: #17171b; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    .note { font-size: 12px; color: #8a93a6; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <h1>📹 TAK Video Viewer — Standalone Test Harness</h1>
+    <p>Exercises the full video engine without WebTAK. Configure your Restreamer, then open feeds.</p>
+  </div>
+
+  <div class="panel">
+    <h2>1 · Point at your TAK Restreamer</h2>
+    <p class="note">Set this once (persisted to localStorage). Or click <b>Add Stream → Settings</b>.</p>
+    <button id="cfg">Set Restreamer host…</button>
+
+    <h2>2 · Open streams</h2>
+    <button id="add">+ Add Stream (dialog)</button>
+    <button id="sample-hls">Open a public HLS test feed</button>
+    <button id="closeall">Close all windows</button>
+
+    <h2>Notes</h2>
+    <p class="note">
+      • Raw <code>rtsp://</code>, <code>rtsps://</code>, <code>srt://</code>, <code>rtmp://</code> feeds require the Restreamer
+      (MediaMTX) to repackage them — the plugin plays <code>:8888/&lt;path&gt;/index.m3u8</code> (HLS) or
+      <code>:8889/&lt;path&gt;/whep</code> (WebRTC).<br>
+      • A direct <code>.m3u8</code> URL plays with no Restreamer.<br>
+      • Drag a window by its title bar; resize from the bottom-right corner.
+    </p>
+  </div>
+
+  <script type="module">
+    import viewer from '../plugin/src/core.js';
+
+    document.getElementById('cfg').onclick = () => {
+      const host = prompt('TAK Restreamer host (e.g. operator.vista.ilwg.us):', viewer.getConfig().restreamerHost || '');
+      if (host !== null) { viewer.configure({ restreamerHost: host.trim() }); alert('Saved: ' + (host || '(cleared)')); }
+    };
+    document.getElementById('add').onclick = () => viewer.add();
+    document.getElementById('closeall').onclick = () => viewer.closeAll();
+    document.getElementById('sample-hls').onclick = () =>
+      viewer.open('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8', 'Mux HLS test feed');
+  </script>
+</body>
+</html>
