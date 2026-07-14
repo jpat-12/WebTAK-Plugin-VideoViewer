@@ -1,2 +1,5 @@
 # Ignore everything in Working-Exclude
 Working-Exclude/
+
+# Deploy-time Restreamer config written by install.sh (may contain API key)
+.takvv-deploy.env

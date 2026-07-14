@@ -16,6 +16,11 @@ const HLS_CONFIG = {
   maxBufferLength: 10,
   backBufferLength: 8,
   liveBackBufferLength: 8,
+  // Fail fast instead of spinning for a minute on an unreachable/misconfigured host.
+  manifestLoadingTimeOut: 8000,
+  manifestLoadingMaxRetry: 2,
+  levelLoadingTimeOut: 8000,
+  fragLoadingTimeOut: 12000,
 };
 
 const STALL_MS = 8000;
@@ -27,7 +32,10 @@ function loadHlsJs() {
   if (hlsJsPromise) return hlsJsPromise;
   const inject = (src) => new Promise((res, rej) => {
     const s = document.createElement('script');
-    s.src = src; s.onload = () => res(window.Hls); s.onerror = () => rej(new Error('load ' + src));
+    const to = setTimeout(() => { s.remove(); rej(new Error('timeout ' + src)); }, 8000);
+    s.src = src;
+    s.onload = () => { clearTimeout(to); res(window.Hls); };
+    s.onerror = () => { clearTimeout(to); rej(new Error('load ' + src)); };
     document.head.appendChild(s);
   });
   hlsJsPromise = inject(hlsJsLibUrl())

@@ -54,12 +54,21 @@ const DEFAULTS = {
 
 let current = load();
 
+// Deploy-time defaults injected by install.sh as `window.__TAKVV_DEFAULTS__ = {...}`
+// (prepended to the served bundle) so operators never have to open Settings.
+function deployDefaults() {
+  try { return (typeof window !== 'undefined' && window.__TAKVV_DEFAULTS__) || {}; }
+  catch { return {}; }
+}
+
+// Precedence: built-in DEFAULTS < install.sh deploy defaults < the user's saved settings.
 function load() {
+  const base = { ...DEFAULTS, ...deployDefaults() };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    return raw ? { ...base, ...JSON.parse(raw) } : base;
   } catch {
-    return { ...DEFAULTS };
+    return base;
   }
 }
 
@@ -107,6 +116,20 @@ function sanitize(s) {
   return s.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'stream';
 }
 
+// fetch with a hard timeout so an unreachable host/port fails fast instead of hanging.
+async function fetchWithTimeout(url, opts = {}, ms = 8000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error(`Restreamer timed out after ${ms / 1000}s — check the host/port and that it's reachable.`);
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 function origin(cfg, port) {
   // Omit the port when it's blank or the scheme's default — so a reverse-proxied
   // Restreamer on 443/80 (e.g. https://stream.prod.ilwg.us) resolves without ":3000".
@@ -143,7 +166,7 @@ async function listStreams(cfg = getConfig()) {
   if (!cfg.restreamerHost) throw new Error('Set the Restreamer host in Settings first.');
   const headers = {};
   if (cfg.apiKey) headers['X-API-Key'] = cfg.apiKey;
-  const res = await fetch(`${origin(cfg, cfg.apiPort)}/api/streams`, { headers, credentials: 'include' });
+  const res = await fetchWithTimeout(`${origin(cfg, cfg.apiPort)}/api/streams`, { headers, credentials: 'include' });
   if (res.status === 401 || res.status === 403) {
     throw new Error('Restreamer rejected /api/streams — set a valid API key in Settings.');
   }
@@ -204,7 +227,7 @@ async function ensurePull(source, cfg = getConfig()) {
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) headers['X-API-Key'] = cfg.apiKey;
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ url: c.rawSource }) });
+  const res = await fetchWithTimeout(url, { method: 'POST', headers, body: JSON.stringify({ url: c.rawSource }) });
   // Already-exists / already-pulling responses are fine.
   if (!res.ok && res.status !== 400 && res.status !== 409) {
     throw new Error(`Restreamer pull failed for "${c.name}" (HTTP ${res.status}).`);
@@ -254,6 +277,11 @@ const HLS_CONFIG = {
   maxBufferLength: 10,
   backBufferLength: 8,
   liveBackBufferLength: 8,
+  // Fail fast instead of spinning for a minute on an unreachable/misconfigured host.
+  manifestLoadingTimeOut: 8000,
+  manifestLoadingMaxRetry: 2,
+  levelLoadingTimeOut: 8000,
+  fragLoadingTimeOut: 12000,
 };
 
 const STALL_MS = 8000;
@@ -265,7 +293,10 @@ function loadHlsJs() {
   if (hlsJsPromise) return hlsJsPromise;
   const inject = (src) => new Promise((res, rej) => {
     const s = document.createElement('script');
-    s.src = src; s.onload = () => res(window.Hls); s.onerror = () => rej(new Error('load ' + src));
+    const to = setTimeout(() => { s.remove(); rej(new Error('timeout ' + src)); }, 8000);
+    s.src = src;
+    s.onload = () => { clearTimeout(to); res(window.Hls); };
+    s.onerror = () => { clearTimeout(to); rej(new Error('load ' + src)); };
     document.head.appendChild(s);
   });
   hlsJsPromise = inject(hlsJsLibUrl())

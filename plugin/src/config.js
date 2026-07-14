@@ -49,12 +49,21 @@ export const DEFAULTS = {
 
 let current = load();
 
+// Deploy-time defaults injected by install.sh as `window.__TAKVV_DEFAULTS__ = {...}`
+// (prepended to the served bundle) so operators never have to open Settings.
+function deployDefaults() {
+  try { return (typeof window !== 'undefined' && window.__TAKVV_DEFAULTS__) || {}; }
+  catch { return {}; }
+}
+
+// Precedence: built-in DEFAULTS < install.sh deploy defaults < the user's saved settings.
 function load() {
+  const base = { ...DEFAULTS, ...deployDefaults() };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    return raw ? { ...base, ...JSON.parse(raw) } : base;
   } catch {
-    return { ...DEFAULTS };
+    return base;
   }
 }
 

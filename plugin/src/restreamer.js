@@ -27,6 +27,20 @@ function sanitize(s) {
   return s.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'stream';
 }
 
+// fetch with a hard timeout so an unreachable host/port fails fast instead of hanging.
+async function fetchWithTimeout(url, opts = {}, ms = 8000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error(`Restreamer timed out after ${ms / 1000}s — check the host/port and that it's reachable.`);
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 function origin(cfg, port) {
   // Omit the port when it's blank or the scheme's default — so a reverse-proxied
   // Restreamer on 443/80 (e.g. https://stream.prod.ilwg.us) resolves without ":3000".
@@ -63,7 +77,7 @@ export async function listStreams(cfg = getConfig()) {
   if (!cfg.restreamerHost) throw new Error('Set the Restreamer host in Settings first.');
   const headers = {};
   if (cfg.apiKey) headers['X-API-Key'] = cfg.apiKey;
-  const res = await fetch(`${origin(cfg, cfg.apiPort)}/api/streams`, { headers, credentials: 'include' });
+  const res = await fetchWithTimeout(`${origin(cfg, cfg.apiPort)}/api/streams`, { headers, credentials: 'include' });
   if (res.status === 401 || res.status === 403) {
     throw new Error('Restreamer rejected /api/streams — set a valid API key in Settings.');
   }
@@ -124,7 +138,7 @@ export async function ensurePull(source, cfg = getConfig()) {
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) headers['X-API-Key'] = cfg.apiKey;
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ url: c.rawSource }) });
+  const res = await fetchWithTimeout(url, { method: 'POST', headers, body: JSON.stringify({ url: c.rawSource }) });
   // Already-exists / already-pulling responses are fine.
   if (!res.ok && res.status !== 400 && res.status !== 409) {
     throw new Error(`Restreamer pull failed for "${c.name}" (HTTP ${res.status}).`);
