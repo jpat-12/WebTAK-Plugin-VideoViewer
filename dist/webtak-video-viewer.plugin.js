@@ -30,7 +30,10 @@ const DEFAULTS = {
   //   'direct' -> :mediamtxPort/{name}/index.m3u8            (MediaMTX native; may lack CORS)
   hlsMode: 'proxy',
 
-  // API key (X-API-Key) — only needed to register/pull external sources on demand.
+  // Drop the audio track from proxy playback (?videoonly=1). Lighter; matches the wall.
+  videoOnly: true,
+
+  // API key (X-API-Key) — needed to list streams (TAK Library) and to pull external sources.
   apiKey: '',
 
   // When a raw rtsp/rtsps/srt/rtmp URL is added, POST it to /api/streams/{name}/pull
@@ -111,8 +114,35 @@ function hlsUrl(name, mode = getConfig().hlsMode, cfg = getConfig()) {
     case 'abr':    return `${origin(cfg, cfg.apiPort)}/hls/${name}/master.m3u8`;
     case 'direct': return `${origin(cfg, cfg.mediamtxPort)}/${name}/index.m3u8`;
     case 'proxy':
-    default:       return `${origin(cfg, cfg.apiPort)}/api/hls/proxy/${name}/index.m3u8`;
+    default: {
+      // ?videoonly=1 drops the audio track — lighter demux, matches the video-wall default.
+      const q = cfg.videoOnly ? '?videoonly=1' : '';
+      return `${origin(cfg, cfg.apiPort)}/api/hls/proxy/${name}/index.m3u8${q}`;
+    }
   }
+}
+
+/** URL of the hls.js library. Prefer the Restreamer's own copy (no CDN / offline-safe). */
+function hlsJsLibUrl(cfg = getConfig()) {
+  if (cfg.restreamerHost) return `${origin(cfg, cfg.apiPort)}/static/hls.min.js`;
+  return cfg.hlsJsUrl;   // CDN fallback when no host is configured (e.g. direct .m3u8 only)
+}
+
+/**
+ * List available streams from the Restreamer — the same source the video wall uses.
+ * GET /api/streams -> [{ name, ready, numReaders, recording, lastDataTime }]
+ */
+async function listStreams(cfg = getConfig()) {
+  if (!cfg.restreamerHost) throw new Error('Set the Restreamer host in Settings first.');
+  const headers = {};
+  if (cfg.apiKey) headers['X-API-Key'] = cfg.apiKey;
+  const res = await fetch(`${origin(cfg, cfg.apiPort)}/api/streams`, { headers, credentials: 'include' });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Restreamer rejected /api/streams — set a valid API key in Settings.');
+  }
+  if (!res.ok) throw new Error(`Restreamer /api/streams returned HTTP ${res.status}.`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data.streams || []);
 }
 
 /**
@@ -177,103 +207,65 @@ async function ensurePull(source, cfg = getConfig()) {
 
 
 /* ===== src/tak-video-library.js ===== */
-// Reads the TAK server's video library (VideoConnections) so users can pick an
-// existing feed instead of pasting a URL.
+// Stream picker source. Mirrors the TAK Video Restreamer video wall: it lists the
+// available streams from GET /api/streams (the same endpoint videowall.html uses),
+// rather than the TAK server's /Marti/api/video.
 //
-// TAK Server exposes video connections at:
-//   GET /Marti/api/video   -> JSON { videoConnections: [ { alias, feeds:[{ url, ... }] } ] }
-// Older servers return VideoConnections XML. We handle both, and fail soft (empty
-// list) so the manual-entry tab always works even if the endpoint is unavailable.
+// Returns normalized rows the picker renders; each row's `name` is played as a
+// Restreamer stream name (resolved to the HLS proxy URL by restreamer.js).
 
 
-function serverBase() {
-  const cfg = getConfig();
-  if (cfg.takServerBase) return cfg.takServerBase.replace(/\/+$/, '');
-  return location.origin;   // WebTAK is served from the TAK server origin
-}
-
-/** @returns {Promise<Array<{alias:string, url:string, protocol:string}>>} */
+/** @returns {Promise<Array<{name:string, ready:boolean, viewers:number, recording:boolean}>>} */
 async function fetchVideoLibrary() {
-  const base = serverBase();
-  try {
-    const res = await fetch(`${base}/Marti/api/video`, { credentials: 'include' });
-    if (res.ok) {
-      const ct = res.headers.get('content-type') || '';
-      if (ct.includes('json')) return parseJson(await res.json());
-      return parseXml(await res.text());
-    }
-  } catch { /* fall through to empty */ }
-  return [];
-}
-
-function parseJson(data) {
-  const conns = data?.videoConnections || data?.data || [];
-  const out = [];
-  for (const c of conns) {
-    const feeds = c.feeds || [c];
-    for (const f of feeds) {
-      const url = f.url || buildUrl(f);
-      if (url) out.push({ alias: c.alias || f.alias || url, url, protocol: schemeOf(url) });
-    }
-  }
-  return out;
-}
-
-function parseXml(text) {
-  const doc = new DOMParser().parseFromString(text, 'application/xml');
-  const out = [];
-  doc.querySelectorAll('feed, videoConnections > *').forEach((node) => {
-    const alias = node.querySelector('alias')?.textContent || node.getAttribute('alias') || '';
-    const url = node.querySelector('address')?.textContent || node.querySelector('url')?.textContent || buildUrl({
-      protocol: node.querySelector('protocol')?.textContent,
-      address: node.querySelector('address')?.textContent,
-      port: node.querySelector('port')?.textContent,
-      path: node.querySelector('path')?.textContent,
-    });
-    if (url) out.push({ alias: alias || url, url, protocol: schemeOf(url) });
-  });
-  return out;
-}
-
-function buildUrl(f) {
-  if (!f || !f.address) return '';
-  const proto = (f.protocol || 'rtsp').toLowerCase();
-  const port = f.port ? `:${f.port}` : '';
-  const path = f.path ? (f.path.startsWith('/') ? f.path : `/${f.path}`) : '';
-  return `${proto}://${f.address}${port}${path}`;
-}
-
-function schemeOf(url) {
-  try { return new URL(url).protocol.replace(':', '').toUpperCase(); } catch { return '—'; }
+  const streams = await listStreams();
+  return streams
+    .map((s) => ({
+      name: s.name,
+      ready: !!s.ready,
+      viewers: Number(s.numReaders || 0),
+      recording: !!s.recording,
+    }))
+    .sort((a, b) => (b.ready - a.ready) || a.name.localeCompare(b.name));
 }
 
 
 /* ===== src/player.js ===== */
 // Playback engine: drives a <video> element from a list of HLS (.m3u8) candidate
-// URLs, falling back between them and reconnecting on drop. The TAK Video Restreamer
-// is HLS-only, so there is no WebRTC path here.
+// URLs. hls.js config, error recovery, and stall handling mirror the TAK Video
+// Restreamer's own videowall.html so playback is smooth instead of glitchy.
 
 
 let hlsJsPromise = null;
 
-/** Lazy-load hls.js once (skipped if the browser plays HLS natively, e.g. Safari). */
+// hls.js tuned to match the Restreamer video wall (web/static/videowall.html).
+const HLS_CONFIG = {
+  debug: false,
+  enableWorker: true,          // parse off the main thread — the big anti-jank win
+  lowLatencyMode: true,
+  liveSyncDurationCount: 2,
+  maxBufferLength: 10,
+  backBufferLength: 8,
+  liveBackBufferLength: 8,
+};
+
+const STALL_MS = 8000;
+const MAX_FATAL = 6;           // fatal errors before giving up on a candidate
+
+/** Lazy-load hls.js once — from the Restreamer's /static copy, CDN only as a fallback. */
 function loadHlsJs() {
   if (window.Hls) return Promise.resolve(window.Hls);
   if (hlsJsPromise) return hlsJsPromise;
-  hlsJsPromise = new Promise((res, rej) => {
+  const inject = (src) => new Promise((res, rej) => {
     const s = document.createElement('script');
-    s.src = getConfig().hlsJsUrl;
-    s.onload = () => res(window.Hls);
-    s.onerror = () => rej(new Error('Failed to load hls.js'));
+    s.src = src; s.onload = () => res(window.Hls); s.onerror = () => rej(new Error('load ' + src));
     document.head.appendChild(s);
   });
+  hlsJsPromise = inject(hlsJsLibUrl())
+    .catch(() => inject(getConfig().hlsJsUrl))   // fall back to CDN if /static is unreachable
+    .catch(() => { hlsJsPromise = null; throw new Error('Failed to load hls.js'); });
   return hlsJsPromise;
 }
 
-/**
- * A Player binds one source to one <video>. It owns the active Hls instance and
- * cleans it up on destroy().
- */
 class Player {
   constructor(video, source, { onStatus } = {}) {
     this.video = video;
@@ -281,9 +273,13 @@ class Player {
     this.onStatus = onStatus || (() => {});
     this._hls = null;
     this._retryTimer = null;
+    this._stallTimer = null;
     this._destroyed = false;
     this._candidateIndex = 0;
     this._candidates = [];
+    this._fatalCount = 0;
+    this._onWaiting = () => this._armStall();
+    this._onPlaying = () => { this._clearStall(); this._status('live'); };
   }
 
   async start() {
@@ -301,6 +297,7 @@ class Player {
 
   async _playCurrent() {
     this._teardown();
+    this._fatalCount = 0;
     const cand = this._candidates[this._candidateIndex];
     if (!cand) { this._status('error', 'No playable URL'); return this._scheduleRetry(); }
     this._status('connecting', 'HLS …');
@@ -318,7 +315,10 @@ class Player {
 
   async _playHls(url) {
     const video = this.video;
-    // Native HLS (Safari / iOS) — cheapest path.
+    video.addEventListener('waiting', this._onWaiting);
+    video.addEventListener('playing', this._onPlaying);
+
+    // Native HLS (Safari / iOS) — no hls.js needed.
     if (video.canPlayType('application/vnd.apple.mpegurl') && !window.Hls) {
       video.src = url;
       video.onloadeddata = () => this._status('live');
@@ -326,21 +326,47 @@ class Player {
       video.play().catch(() => {});
       return;
     }
-    const Hls = await loadHlsJs();
+
+    let Hls;
+    try { Hls = await loadHlsJs(); } catch (e) { this._status('error', e.message); return this._scheduleRetry(); }
     if (this._destroyed) return;
+
     if (Hls && Hls.isSupported()) {
-      const hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
+      const hls = new Hls(HLS_CONFIG);
       this._hls = hls;
       hls.loadSource(url);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => { this._status('live'); video.play().catch(() => {}); });
-      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) this._onFailure(); });
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal) return;
+        if (++this._fatalCount > MAX_FATAL) return this._onFailure();
+        // Recover in place rather than tearing everything down — the wall's approach.
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            this._status('connecting', 'Reconnecting…'); hls.startLoad(); break;
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            hls.recoverMediaError(); break;
+          default:
+            this._onFailure();
+        }
+      });
     } else {
       this._onFailure();
     }
   }
 
-  // A URL failed: try the next candidate, else schedule a full retry.
+  // Reload the current candidate if playback stalls (no 'playing' within STALL_MS).
+  _armStall() {
+    this._clearStall();
+    this._stallTimer = setTimeout(() => {
+      if (this._destroyed) return;
+      this._status('connecting', 'Stalled — reloading…');
+      this._playCurrent();
+    }, STALL_MS);
+  }
+
+  _clearStall() { clearTimeout(this._stallTimer); this._stallTimer = null; }
+
   _onFailure() {
     if (this._destroyed) return;
     if (!this._nextCandidate()) {
@@ -358,6 +384,9 @@ class Player {
   _status(state, detail) { this.onStatus({ state, detail }); }
 
   _teardown() {
+    this._clearStall();
+    this.video.removeEventListener('waiting', this._onWaiting);
+    this.video.removeEventListener('playing', this._onPlaying);
     if (this._hls) { try { this._hls.destroy(); } catch {} this._hls = null; }
     this.video.removeAttribute('src');
     this.video.srcObject = null;
@@ -682,12 +711,18 @@ function renderManual(pane, pick) {
 async function loadLibrary(pane, pick) {
   if (pane.dataset.loaded) return;
   pane.dataset.loaded = '1';
-  pane.innerHTML = `<div class="takvv-empty">Loading TAK video library…</div>`;
+  pane.innerHTML = `<div class="takvv-empty">Loading streams from the Restreamer…</div>`;
   let feeds = [];
-  try { feeds = await fetchVideoLibrary(); } catch { /* ignore */ }
-  if (!feeds.length) {
-    pane.innerHTML = `<div class="takvv-empty">No feeds found on the TAK server.<br>Use the Manual URL tab.</div>`;
+  try {
+    feeds = await fetchVideoLibrary();
+  } catch (err) {
+    pane.innerHTML = `<div class="takvv-empty">${escapeHtml(err.message)}</div>`;
     pane.dataset.loaded = '';   // allow retry on next open
+    return;
+  }
+  if (!feeds.length) {
+    pane.innerHTML = `<div class="takvv-empty">No streams published on the Restreamer.<br>Use the Manual URL tab, or start publishing.</div>`;
+    pane.dataset.loaded = '';
     return;
   }
   const list = document.createElement('div');
@@ -695,8 +730,11 @@ async function loadLibrary(pane, pick) {
   feeds.forEach((f) => {
     const item = document.createElement('div');
     item.className = 'takvv-item';
-    item.innerHTML = `<span>${escapeHtml(f.alias)}<small>${escapeHtml(f.url)}</small></span><span class="takvv-hint">${f.protocol}</span>`;
-    item.addEventListener('click', () => pick(f.url, f.alias));
+    const status = f.ready
+      ? `<span class="takvv-hint" style="color:#24c265">● live · ${f.viewers} viewer${f.viewers === 1 ? '' : 's'}${f.recording ? ' · REC' : ''}</span>`
+      : `<span class="takvv-hint">○ idle</span>`;
+    item.innerHTML = `<span>${escapeHtml(f.name)}<small>${f.ready ? 'ready' : 'no publisher'}</small></span>${status}`;
+    item.addEventListener('click', () => pick(f.name, f.name));
     list.appendChild(item);
   });
   pane.innerHTML = '';
@@ -726,8 +764,12 @@ function renderSettings(pane) {
       <div class="takvv-field"><label>MediaMTX port</label><input class="s-mtx" type="number" value="${attr(c.mediamtxPort)}" /></div>
     </div>
     <div class="takvv-field">
-      <label>API key (X-API-Key) — only for on-demand pulls</label>
-      <input class="s-apikey" type="password" placeholder="leave blank if not pulling external sources" value="${attr(c.apiKey)}" />
+      <label>API key (X-API-Key)</label>
+      <input class="s-apikey" type="password" placeholder="required for the TAK Library list and on-demand pulls" value="${attr(c.apiKey)}" />
+      <div class="takvv-hint">Used to list streams (GET /api/streams) and to pull external sources.</div>
+    </div>
+    <div class="takvv-field">
+      <label><input class="s-videoonly" type="checkbox" ${c.videoOnly ? 'checked' : ''} style="width:auto;margin-right:6px"> Video only (drop audio — lighter, matches the video wall)</label>
     </div>
     <div class="takvv-field">
       <label><input class="s-ondemand" type="checkbox" ${c.useOnDemandApi ? 'checked' : ''} style="width:auto;margin-right:6px"> Pull raw sources on demand via Restreamer API</label>
@@ -746,6 +788,7 @@ function renderSettings(pane) {
       apiPort: +pane.querySelector('.s-api').value || 3000,
       mediamtxPort: +pane.querySelector('.s-mtx').value || 8888,
       apiKey: pane.querySelector('.s-apikey').value.trim(),
+      videoOnly: pane.querySelector('.s-videoonly').checked,
       useOnDemandApi: pane.querySelector('.s-ondemand').checked,
     });
     pane.querySelector('.s-saved').textContent = 'Saved ✓';

@@ -25,7 +25,10 @@ export const DEFAULTS = {
   //   'direct' -> :mediamtxPort/{name}/index.m3u8            (MediaMTX native; may lack CORS)
   hlsMode: 'proxy',
 
-  // API key (X-API-Key) — only needed to register/pull external sources on demand.
+  // Drop the audio track from proxy playback (?videoonly=1). Lighter; matches the wall.
+  videoOnly: true,
+
+  // API key (X-API-Key) — needed to list streams (TAK Library) and to pull external sources.
   apiKey: '',
 
   // When a raw rtsp/rtsps/srt/rtmp URL is added, POST it to /api/streams/{name}/pull

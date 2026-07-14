@@ -36,8 +36,35 @@ export function hlsUrl(name, mode = getConfig().hlsMode, cfg = getConfig()) {
     case 'abr':    return `${origin(cfg, cfg.apiPort)}/hls/${name}/master.m3u8`;
     case 'direct': return `${origin(cfg, cfg.mediamtxPort)}/${name}/index.m3u8`;
     case 'proxy':
-    default:       return `${origin(cfg, cfg.apiPort)}/api/hls/proxy/${name}/index.m3u8`;
+    default: {
+      // ?videoonly=1 drops the audio track — lighter demux, matches the video-wall default.
+      const q = cfg.videoOnly ? '?videoonly=1' : '';
+      return `${origin(cfg, cfg.apiPort)}/api/hls/proxy/${name}/index.m3u8${q}`;
+    }
   }
+}
+
+/** URL of the hls.js library. Prefer the Restreamer's own copy (no CDN / offline-safe). */
+export function hlsJsLibUrl(cfg = getConfig()) {
+  if (cfg.restreamerHost) return `${origin(cfg, cfg.apiPort)}/static/hls.min.js`;
+  return cfg.hlsJsUrl;   // CDN fallback when no host is configured (e.g. direct .m3u8 only)
+}
+
+/**
+ * List available streams from the Restreamer — the same source the video wall uses.
+ * GET /api/streams -> [{ name, ready, numReaders, recording, lastDataTime }]
+ */
+export async function listStreams(cfg = getConfig()) {
+  if (!cfg.restreamerHost) throw new Error('Set the Restreamer host in Settings first.');
+  const headers = {};
+  if (cfg.apiKey) headers['X-API-Key'] = cfg.apiKey;
+  const res = await fetch(`${origin(cfg, cfg.apiPort)}/api/streams`, { headers, credentials: 'include' });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Restreamer rejected /api/streams — set a valid API key in Settings.');
+  }
+  if (!res.ok) throw new Error(`Restreamer /api/streams returned HTTP ${res.status}.`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data.streams || []);
 }
 
 /**

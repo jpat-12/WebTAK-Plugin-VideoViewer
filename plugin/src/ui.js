@@ -88,12 +88,18 @@ function renderManual(pane, pick) {
 async function loadLibrary(pane, pick) {
   if (pane.dataset.loaded) return;
   pane.dataset.loaded = '1';
-  pane.innerHTML = `<div class="takvv-empty">Loading TAK video library…</div>`;
+  pane.innerHTML = `<div class="takvv-empty">Loading streams from the Restreamer…</div>`;
   let feeds = [];
-  try { feeds = await fetchVideoLibrary(); } catch { /* ignore */ }
-  if (!feeds.length) {
-    pane.innerHTML = `<div class="takvv-empty">No feeds found on the TAK server.<br>Use the Manual URL tab.</div>`;
+  try {
+    feeds = await fetchVideoLibrary();
+  } catch (err) {
+    pane.innerHTML = `<div class="takvv-empty">${escapeHtml(err.message)}</div>`;
     pane.dataset.loaded = '';   // allow retry on next open
+    return;
+  }
+  if (!feeds.length) {
+    pane.innerHTML = `<div class="takvv-empty">No streams published on the Restreamer.<br>Use the Manual URL tab, or start publishing.</div>`;
+    pane.dataset.loaded = '';
     return;
   }
   const list = document.createElement('div');
@@ -101,8 +107,11 @@ async function loadLibrary(pane, pick) {
   feeds.forEach((f) => {
     const item = document.createElement('div');
     item.className = 'takvv-item';
-    item.innerHTML = `<span>${escapeHtml(f.alias)}<small>${escapeHtml(f.url)}</small></span><span class="takvv-hint">${f.protocol}</span>`;
-    item.addEventListener('click', () => pick(f.url, f.alias));
+    const status = f.ready
+      ? `<span class="takvv-hint" style="color:#24c265">● live · ${f.viewers} viewer${f.viewers === 1 ? '' : 's'}${f.recording ? ' · REC' : ''}</span>`
+      : `<span class="takvv-hint">○ idle</span>`;
+    item.innerHTML = `<span>${escapeHtml(f.name)}<small>${f.ready ? 'ready' : 'no publisher'}</small></span>${status}`;
+    item.addEventListener('click', () => pick(f.name, f.name));
     list.appendChild(item);
   });
   pane.innerHTML = '';
@@ -132,8 +141,12 @@ function renderSettings(pane) {
       <div class="takvv-field"><label>MediaMTX port</label><input class="s-mtx" type="number" value="${attr(c.mediamtxPort)}" /></div>
     </div>
     <div class="takvv-field">
-      <label>API key (X-API-Key) — only for on-demand pulls</label>
-      <input class="s-apikey" type="password" placeholder="leave blank if not pulling external sources" value="${attr(c.apiKey)}" />
+      <label>API key (X-API-Key)</label>
+      <input class="s-apikey" type="password" placeholder="required for the TAK Library list and on-demand pulls" value="${attr(c.apiKey)}" />
+      <div class="takvv-hint">Used to list streams (GET /api/streams) and to pull external sources.</div>
+    </div>
+    <div class="takvv-field">
+      <label><input class="s-videoonly" type="checkbox" ${c.videoOnly ? 'checked' : ''} style="width:auto;margin-right:6px"> Video only (drop audio — lighter, matches the video wall)</label>
     </div>
     <div class="takvv-field">
       <label><input class="s-ondemand" type="checkbox" ${c.useOnDemandApi ? 'checked' : ''} style="width:auto;margin-right:6px"> Pull raw sources on demand via Restreamer API</label>
@@ -152,6 +165,7 @@ function renderSettings(pane) {
       apiPort: +pane.querySelector('.s-api').value || 3000,
       mediamtxPort: +pane.querySelector('.s-mtx').value || 8888,
       apiKey: pane.querySelector('.s-apikey').value.trim(),
+      videoOnly: pane.querySelector('.s-videoonly').checked,
       useOnDemandApi: pane.querySelector('.s-ondemand').checked,
     });
     pane.querySelector('.s-saved').textContent = 'Saved ✓';

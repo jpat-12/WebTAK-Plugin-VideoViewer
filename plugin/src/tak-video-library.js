@@ -1,70 +1,21 @@
-// Reads the TAK server's video library (VideoConnections) so users can pick an
-// existing feed instead of pasting a URL.
+// Stream picker source. Mirrors the TAK Video Restreamer video wall: it lists the
+// available streams from GET /api/streams (the same endpoint videowall.html uses),
+// rather than the TAK server's /Marti/api/video.
 //
-// TAK Server exposes video connections at:
-//   GET /Marti/api/video   -> JSON { videoConnections: [ { alias, feeds:[{ url, ... }] } ] }
-// Older servers return VideoConnections XML. We handle both, and fail soft (empty
-// list) so the manual-entry tab always works even if the endpoint is unavailable.
+// Returns normalized rows the picker renders; each row's `name` is played as a
+// Restreamer stream name (resolved to the HLS proxy URL by restreamer.js).
 
-import { getConfig } from './config.js';
+import { listStreams } from './restreamer.js';
 
-function serverBase() {
-  const cfg = getConfig();
-  if (cfg.takServerBase) return cfg.takServerBase.replace(/\/+$/, '');
-  return location.origin;   // WebTAK is served from the TAK server origin
-}
-
-/** @returns {Promise<Array<{alias:string, url:string, protocol:string}>>} */
+/** @returns {Promise<Array<{name:string, ready:boolean, viewers:number, recording:boolean}>>} */
 export async function fetchVideoLibrary() {
-  const base = serverBase();
-  try {
-    const res = await fetch(`${base}/Marti/api/video`, { credentials: 'include' });
-    if (res.ok) {
-      const ct = res.headers.get('content-type') || '';
-      if (ct.includes('json')) return parseJson(await res.json());
-      return parseXml(await res.text());
-    }
-  } catch { /* fall through to empty */ }
-  return [];
-}
-
-function parseJson(data) {
-  const conns = data?.videoConnections || data?.data || [];
-  const out = [];
-  for (const c of conns) {
-    const feeds = c.feeds || [c];
-    for (const f of feeds) {
-      const url = f.url || buildUrl(f);
-      if (url) out.push({ alias: c.alias || f.alias || url, url, protocol: schemeOf(url) });
-    }
-  }
-  return out;
-}
-
-function parseXml(text) {
-  const doc = new DOMParser().parseFromString(text, 'application/xml');
-  const out = [];
-  doc.querySelectorAll('feed, videoConnections > *').forEach((node) => {
-    const alias = node.querySelector('alias')?.textContent || node.getAttribute('alias') || '';
-    const url = node.querySelector('address')?.textContent || node.querySelector('url')?.textContent || buildUrl({
-      protocol: node.querySelector('protocol')?.textContent,
-      address: node.querySelector('address')?.textContent,
-      port: node.querySelector('port')?.textContent,
-      path: node.querySelector('path')?.textContent,
-    });
-    if (url) out.push({ alias: alias || url, url, protocol: schemeOf(url) });
-  });
-  return out;
-}
-
-function buildUrl(f) {
-  if (!f || !f.address) return '';
-  const proto = (f.protocol || 'rtsp').toLowerCase();
-  const port = f.port ? `:${f.port}` : '';
-  const path = f.path ? (f.path.startsWith('/') ? f.path : `/${f.path}`) : '';
-  return `${proto}://${f.address}${port}${path}`;
-}
-
-function schemeOf(url) {
-  try { return new URL(url).protocol.replace(':', '').toUpperCase(); } catch { return '—'; }
+  const streams = await listStreams();
+  return streams
+    .map((s) => ({
+      name: s.name,
+      ready: !!s.ready,
+      viewers: Number(s.numReaders || 0),
+      recording: !!s.recording,
+    }))
+    .sort((a, b) => (b.ready - a.ready) || a.name.localeCompare(b.name));
 }
