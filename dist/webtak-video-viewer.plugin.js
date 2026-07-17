@@ -943,13 +943,18 @@ function introspect(toolApi) {
       models: toolApi.models ? Object.keys(toolApi.models) : null,
     };
     let tools = [];
+    let sampleKeys = null;
     if (typeof toolApi.getTools === 'function') {
-      tools = (toolApi.getTools() || []).map((t) => ({
-        id: t && (t.id ?? t.key), name: t && (t.name ?? t.title ?? t.label),
-      }));
+      const raw = toolApi.getTools() || [];
+      tools = raw.map((t) => ({ id: t && (t.id ?? t.key), name: t && (t.name ?? t.title ?? t.label) }));
+      // Full field list of one real tool — shows exactly what shape our tool must be.
+      if (raw[0]) sampleKeys = Object.keys(raw[0]);
     }
+    // Constructor arity of the Tool model (hint at how many/what args it wants).
+    if (info.models && toolApi.models.Tool) info.ToolCtorLength = toolApi.models.Tool.length;
     console.info(LOG, 'window.WebTAK.tool API:', info);
     console.info(LOG, 'existing tools:', tools);
+    console.info(LOG, 'sample tool fields:', sampleKeys);
     return tools;
   } catch (e) {
     console.warn(LOG, 'introspection failed:', e.message);
@@ -957,50 +962,16 @@ function introspect(toolApi) {
   }
 }
 
-// Build a Tool instance if the model needs one, else use the plain config.
-function makeTool(toolApi) {
-  const Model = toolApi.models && toolApi.models.Tool;
-  if (typeof Model === 'function') {
-    try { return new Model(TOOL); } catch { /* fall through to plain object */ }
-  }
-  return TOOL;
-}
-
-// Try every plausible "add a tool" method until one doesn't throw.
-function tryAddTool(toolApi) {
-  const tool = makeTool(toolApi);
-  const candidates = ['add', 'addTool', 'register', 'registerTool', 'create', 'createTool', 'push'];
-  for (const m of candidates) {
-    if (typeof toolApi[m] === 'function') {
-      try { toolApi[m](tool); console.info(LOG, `registered via tool.${m}()`); return true; }
-      catch (e) { console.warn(LOG, `tool.${m}() threw:`, e.message); }
-    }
-  }
-  return false;
-}
-
-// Try to remove/hide the built-in "Video" tool (best-effort).
-function tryRemoveVideoTool(toolApi, tools) {
-  const target = tools.find((t) => /video/i.test(t.name || '') && t.id !== TOOL.id);
-  if (!target) return;
-  const byId = ['remove', 'removeTool', 'deregisterTool', 'unregister', 'delete', 'disable'];
-  for (const m of byId) {
-    if (typeof toolApi[m] === 'function') {
-      try { toolApi[m](target.id ?? target); console.info(LOG, `removed built-in "${target.name}" via tool.${m}()`); return; }
-      catch (e) { console.warn(LOG, `tool.${m}() (remove) threw:`, e.message); }
-    }
-  }
-  console.info(LOG, `could not remove built-in "${target.name}" (no removal method); leaving it in place.`);
-}
-
+// SAFE MODE: only READ the tool API and log it — never mutate WebTAK state.
+// Blindly calling guessed add/remove methods can trigger a React render crash
+// (grey screen). We introspect first, ship, read the console, then wire the
+// exact, verified calls in a follow-up. Always returns false → floating button.
 function registerWithWebTAK() {
   const toolApi = window.WebTAK && window.WebTAK.tool;
   if (!toolApi) { console.info(LOG, 'window.WebTAK.tool not found.'); return false; }
-
-  const existing = introspect(toolApi);
-  const added = tryAddTool(toolApi);
-  if (added) tryRemoveVideoTool(toolApi, existing);
-  return added;
+  introspect(toolApi);
+  console.info(LOG, 'Introspect-only build — paste the "window.WebTAK.tool API" + "existing tools" logs so we can wire drawer registration safely.');
+  return false;
 }
 
 function boot() {
