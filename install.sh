@@ -72,6 +72,8 @@ configure_defaults() {
     echo "Using saved Restreamer config from .takvv-deploy.env (use --reconfigure to change)."
   fi
 
+  local old_umask
+  old_umask="$(umask)"
   umask 077
   cat > "$ENV_FILE" <<EOF
 TAKVV_HOST='${TAKVV_HOST:-}'
@@ -80,6 +82,11 @@ TAKVV_APIPORT='${TAKVV_APIPORT:-}'
 TAKVV_HLSMODE='${TAKVV_HLSMODE:-proxy}'
 TAKVV_APIKEY='${TAKVV_APIKEY:-}'
 EOF
+  # Restore the caller's umask — leaking 077 into later file writes (e.g. the
+  # manifest rewrite below) silently made webtak-manifest.json root-only and
+  # WebTAK's server process couldn't read it anymore (403 on manifest.json,
+  # grey screen). See install.sh history / commit fixing this.
+  umask "$old_umask"
 }
 
 # --- Install / remove --------------------------------------------------------
@@ -122,9 +129,15 @@ if not remove:
     plugins.append(rel)
 
 data["plugins"] = plugins
+orig_mode = os.stat(manifest).st_mode
 tmp = manifest + ".tmp"
 with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
+# Preserve the original file's permissions regardless of the process umask —
+# os.replace keeps the *new* tmp file's mode (umask-derived), not the original's,
+# so a restrictive umask here would silently make the manifest unreadable by
+# WebTAK's server process (403 on manifest.json -> grey screen).
+os.chmod(tmp, orig_mode)
 os.replace(tmp, manifest)
 print(("Removed" if remove else "Registered") + f" plugin entry: {rel}")
 PY
