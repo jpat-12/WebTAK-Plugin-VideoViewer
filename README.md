@@ -112,9 +112,11 @@ disables *all* plugin loading), and backs the file up before editing.
 `WEBTAK_DIR` defaults to `/opt/tak/extract/webtak` — override if yours differs.
 Uninstall with `sudo ./install.sh --remove`. Hard-refresh WebTAK (Ctrl-Shift-R) after either.
 
-**Note on integration:** once loaded, the bundle's `boot()` runs. It probes for WebTAK's
-plugin SDK (`registerPlugin`) and, if not found, shows a floating 📹 launch button so the
-viewer is usable regardless. `window.TAKVideoViewer` is always available.
+**Note on integration:** once loaded, the bundle's `boot()` runs and registers a real
+sidebar tool via `window.WebTAK.plugin.registerPlugin()` (WebTAK 4.10's actual plugin API,
+reverse-engineered from a live session + WebTAK's own bundle — not guessed). If that API
+isn't present or registration fails for any reason, it falls back to a floating 📹 launch
+button so the viewer stays usable regardless. `window.TAKVideoViewer` is always available.
 
 ### Dev / test without WebTAK
 

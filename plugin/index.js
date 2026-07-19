@@ -1,80 +1,70 @@
 // WebTAK entry point.
 //
-// WebTAK 4.10 exposes a tool API at window.WebTAK.tool (drawer tools like the point
-// dropper live there). We register our video viewer as a real drawer tool and try to
-// remove the built-in "Video" tool. Because the tool API's exact method names aren't
-// documented, registerWithWebTAK() DISCOVERS them from the live object at runtime,
-// logs what it finds (so we can finalize deterministically), and ALWAYS falls back to
-// a floating launch button so the plugin is usable no matter what.
+// WebTAK 4.10's real plugin/sidebar API is window.WebTAK.plugin.registerPlugin(), which
+// takes a Plugin model instance (window.WebTAK.plugin.models.Plugin) built from one or
+// more Tool instances (window.WebTAK.tool.models.Tool). This shape was reverse-engineered
+// by reading the live objects in a running WebTAK session (getTools()/hasPlugin() calls)
+// and confirmed by pulling the actual constructor + validator out of WebTAK's own
+// main.*.js bundle — not guessed. An earlier version of this file guessed at
+// window.WebTAK.tool add/remove methods that don't exist, which threw during WebTAK's
+// render and blanked the whole page (grey screen). Registration below is wrapped so any
+// unexpected failure here can only fall back to the floating button, never crash WebTAK.
+//
+// Plugin constructor requires: name, description, version (non-empty strings), and
+// tools/drawers as arrays (even empty) — see class Dlt in WebTAK's main.*.js. Tool
+// instances must be real `new Tool(...)` objects, not plain object literals.
 
 import viewer from './src/core.js';
 
-const TOOL = {
-  id: 'takvv-video-viewer',
-  key: 'takvv-video-viewer',
-  name: 'Video Streamer',
-  title: 'Video Streamer',
-  label: 'Video Streamer',
-  description: 'Floating, resizable windows for RTSP / RTSPS / SRT / RTMP / HLS feeds via the TAK Restreamer.',
-  icon: '📹',
-  onClick: () => viewer.add(),
-  onSelect: () => viewer.add(),
-  onActivate: () => viewer.add(),
-  action: () => viewer.add(),
-  handler: () => viewer.add(),
-};
-
 const LOG = '[TAK Video Viewer]';
 
-// Dump the live tool API so we can see the real method names + existing tools.
-function introspect(toolApi) {
-  try {
-    const proto = Object.getPrototypeOf(toolApi) || {};
-    const info = {
-      webtakKeys: Object.keys(window.WebTAK || {}),
-      toolKeys: Object.keys(toolApi),
-      toolMethods: Object.getOwnPropertyNames(proto).filter((n) => n !== 'constructor'),
-      models: toolApi.models ? Object.keys(toolApi.models) : null,
-    };
-    let tools = [];
-    let sampleKeys = null;
-    if (typeof toolApi.getTools === 'function') {
-      const raw = toolApi.getTools() || [];
-      tools = raw.map((t) => ({ id: t && (t.id ?? t.key), name: t && (t.name ?? t.title ?? t.label) }));
-      // Full field list of one real tool — shows exactly what shape our tool must be.
-      if (raw[0]) sampleKeys = Object.keys(raw[0]);
-    }
-    // Constructor arity of the Tool model (hint at how many/what args it wants).
-    if (info.models && toolApi.models.Tool) info.ToolCtorLength = toolApi.models.Tool.length;
-    console.info(LOG, 'window.WebTAK.tool API:', info);
-    console.info(LOG, 'existing tools:', tools);
-    console.info(LOG, 'sample tool fields:', sampleKeys);
-    return tools;
-  } catch (e) {
-    console.warn(LOG, 'introspection failed:', e.message);
-    return [];
-  }
-}
+// 24x24 video-camera glyph, so we don't depend on WebTAK's built-in icon font names.
+const ICON_URL =
+  'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ij48cGF0aCBmaWxsPSIjRDVENUQ1IiBkPSJNMTcgMTBsNS01djE0bC01LTV2NGEyIDIgMCAwMS0yIDJINGEyIDIgMCAwMS0yLTJWOGEyIDIgMCAwMTItMmgxMWEyIDIgMCAwMTIgMnY0eiIvPjwvc3ZnPg==';
 
-// SAFE MODE: only READ the tool API and log it — never mutate WebTAK state.
-// Blindly calling guessed add/remove methods can trigger a React render crash
-// (grey screen). We introspect first, ship, read the console, then wire the
-// exact, verified calls in a follow-up. Always returns false → floating button.
 function registerWithWebTAK() {
-  const toolApi = window.WebTAK && window.WebTAK.tool;
-  if (!toolApi) { console.info(LOG, 'window.WebTAK.tool not found.'); return false; }
-  introspect(toolApi);
-  console.info(LOG, 'Introspect-only build — paste the "window.WebTAK.tool API" + "existing tools" logs so we can wire drawer registration safely.');
-  return false;
+  try {
+    const toolApi = window.WebTAK && window.WebTAK.tool;
+    const pluginApi = window.WebTAK && window.WebTAK.plugin;
+    if (!toolApi || !pluginApi) return false;
+
+    const PLUGIN_ID = 'takvv-video-viewer';
+    if (pluginApi.hasPlugin(PLUGIN_ID)) return true; // already registered (e.g. hot reload)
+
+    const tool = new toolApi.models.Tool({
+      category: 'other',
+      iconUrl: ICON_URL,
+      name: PLUGIN_ID,
+      title: 'Video Streamer',
+      deviceTypes: 'all',
+      onClick: () => viewer.add(),
+    });
+
+    const plugin = new pluginApi.models.Plugin({
+      name: PLUGIN_ID,
+      description: 'Floating, resizable windows for RTSP / RTSPS / SRT / RTMP / HLS feeds via the TAK Restreamer.',
+      version: '0.1.0',
+      tools: [tool],
+      drawers: [],
+    });
+
+    pluginApi.registerPlugin(plugin);
+    return pluginApi.hasPlugin(PLUGIN_ID);
+  } catch (e) {
+    console.warn(LOG, 'sidebar registration failed, falling back to floating button:', e);
+    return false;
+  }
 }
 
 function boot() {
   viewer.mount();
-  if (!registerWithWebTAK()) {
-    // Fallback: couldn't register as a drawer tool — floating launch button so the
+  if (registerWithWebTAK()) {
+    console.info(LOG, 'Registered as a WebTAK sidebar tool.');
+  } else {
+    // Fallback: couldn't register as a sidebar tool — floating launch button so the
     // viewer is still usable. window.TAKVideoViewer is always available too.
     viewer.showLaunchButton('📹 Video');
-    console.info(LOG, 'Using floating launch button. Paste the "window.WebTAK.tool API" log above so we can finalize drawer registration.');
+    console.info(LOG, 'Using floating launch button (sidebar registration unavailable).');
   }
 }
 
@@ -85,4 +75,3 @@ if (document.readyState === 'loading') {
 }
 
 export default viewer;
-export { TOOL };
