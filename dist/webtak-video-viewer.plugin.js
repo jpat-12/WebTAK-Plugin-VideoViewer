@@ -417,7 +417,11 @@ class Player {
   _scheduleRetry() {
     if (this._destroyed) return;
     clearTimeout(this._retryTimer);
-    this._retryTimer = setTimeout(() => { this._candidateIndex = 0; this._playCurrent(); }, getConfig().retryDelayMs);
+    // Re-run start() (not _playCurrent()) so ensurePull()/resolve() run again — if either
+    // threw on the previous attempt, this._candidates never got (re)populated and every
+    // retry would otherwise permanently read past the empty array and report a misleading
+    // "No playable URL" instead of the real error.
+    this._retryTimer = setTimeout(() => { this.start(); }, getConfig().retryDelayMs);
   }
 
   _status(state, detail) { this.onStatus({ state, detail }); }
