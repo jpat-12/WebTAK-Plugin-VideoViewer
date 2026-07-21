@@ -108,7 +108,7 @@ async function loadLibrary(pane, pick) {
     const item = document.createElement('div');
     item.className = 'takvv-item';
     const status = f.ready
-      ? `<span class="takvv-hint" style="color:#24c265">● live · ${f.viewers} viewer${f.viewers === 1 ? '' : 's'}${f.recording ? ' · REC' : ''}</span>`
+      ? `<span class="takvv-hint" style="color:#4caf50">● live · ${f.viewers} viewer${f.viewers === 1 ? '' : 's'}${f.recording ? ' · REC' : ''}</span>`
       : `<span class="takvv-hint">○ idle</span>`;
     item.innerHTML = `<span>${escapeHtml(f.name)}<small>${f.ready ? 'ready' : 'no publisher'}</small></span>${status}`;
     item.addEventListener('click', () => pick(f.name, f.name));
